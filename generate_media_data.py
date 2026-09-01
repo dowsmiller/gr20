@@ -12,7 +12,6 @@ from __future__ import annotations
 import bisect
 from concurrent.futures import ThreadPoolExecutor
 import json
-import re
 import subprocess
 import imageio_ffmpeg
 from pathlib import Path
@@ -136,17 +135,25 @@ def build_video_cache(path: Path) -> str | None:
 def image_capture_timestamp(path: Path) -> float | None:
     if path.suffix.lower() not in IMAGE_EXTS:
         return None
-    result = subprocess.run(
-        ["sips", "-g", "creation", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    match = re.search(r"creation:\s+(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})", result.stdout)
-    if not match:
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            capture_time = (
+                exif.get(36867)  # DateTimeOriginal
+                or exif.get(36868)  # DateTimeDigitized
+                or exif.get(306)  # DateTime
+            )
+    except (OSError, ValueError):
         return None
-    capture_time = datetime.strptime(match.group(1), "%Y:%m:%d %H:%M:%S")
-    return capture_time.replace(tzinfo=CORSICA_TIMEZONE).timestamp()
+    if isinstance(capture_time, bytes):
+        capture_time = capture_time.decode(errors="ignore")
+    if not isinstance(capture_time, str):
+        return None
+    try:
+        timestamp = datetime.strptime(capture_time, "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
+    return timestamp.replace(tzinfo=CORSICA_TIMEZONE).timestamp()
 
 
 def location_for_timestamp(route_points: list[dict], timestamps: list[float], media_epoch: float) -> dict:
