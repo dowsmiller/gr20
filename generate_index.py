@@ -714,13 +714,13 @@ def main() -> None:
         const fullResImageSrc = item.image ? getFullResImageUrl(item) : '';
         if (item.kind === 'live_photo' && imageSrc && videoSrc) {
           const imgTag = fullResImageSrc 
-            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\'' + imageSrc + '\'" alt="Trail media" />'
+            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\\'' + imageSrc + '\\'" alt="Trail media" />'
             : '<img src="' + imageSrc + '" alt="Trail media" />';
           return '<div class="media-lightbox-live">' + imgTag + '<video data-live-photo muted autoplay playsinline controls src="' + videoSrc + '"></video></div>';
         }
         if (imageSrc) {
           const imgTag = fullResImageSrc
-            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\'' + imageSrc + '\'" alt="Trail media" />'
+            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\\'' + imageSrc + '\\'" alt="Trail media" />'
             : '<img src="' + imageSrc + '" alt="Trail media" />';
           return imgTag;
         }
