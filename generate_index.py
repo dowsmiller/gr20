@@ -2,11 +2,47 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA_PATH = ROOT / "route_data.json"
 OUT_PATH = ROOT / "index.html"
+
+
+def get_github_repo_info() -> dict:
+    """Extract GitHub repository info for full-quality image serving."""
+    # Check for environment variable first (useful for CI/CD)
+    env_base = os.environ.get("GITHUB_RAW_BASE", "").strip()
+    if env_base:
+        return {"repo_url": "", "github_raw_base": env_base}
+    
+    # Try to get from git config
+    try:
+        repo_url = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        ).strip()
+        if not repo_url:
+            return {"repo_url": "", "github_raw_base": ""}
+            
+        # Handle both HTTPS and SSH URLs
+        if repo_url.startswith("git@github.com:"):
+            repo_url = repo_url.replace("git@github.com:", "https://github.com/").replace(".git", "")
+        elif repo_url.endswith(".git"):
+            repo_url = repo_url[:-4]
+        
+        github_raw_base = f"{repo_url.replace('github.com', 'raw.githubusercontent.com')}/main"
+        return {
+            "repo_url": repo_url,
+            "github_raw_base": github_raw_base
+        }
+    except Exception as e:
+        # Silently fail; will use local cache URLs instead
+        return {"repo_url": "", "github_raw_base": ""}
 
 
 def main() -> None:
@@ -17,6 +53,9 @@ def main() -> None:
 
     tracks_json = json.dumps(tracks, separators=(",", ":"))
     media_json = json.dumps(media, separators=(",", ":"))
+    
+    github_info = get_github_repo_info()
+    github_raw_base = github_info["github_raw_base"]
 
     total_track_km = round(sum(float(t["distance_km"]) for t in tracks), 1)
 
@@ -441,6 +480,7 @@ def main() -> None:
     <script>
       const tracks = __TRACKS_JSON__;
       const mediaItems = __MEDIA_JSON__;
+      const githubRawBase = '__GITHUB_RAW_BASE__';
       let mediaLayer;
 
       const map = L.map('map', {
@@ -567,6 +607,11 @@ def main() -> None:
         return 'photos/' + encodeURI(safeName);
       }
 
+      function getFullResImageUrl(item) {
+        if (!item.filename || !githubRawBase) return '';
+        return githubRawBase + '/photos/' + encodeURIComponent(item.filename);
+      }
+
       function mediaPreviewMarkup(item) {
         const imageSrc = item.image ? mediaUrl(item.preview || item.image_path || item.image) : '';
         const expandedImageSrc = item.image ? mediaUrl(item.expanded_preview || item.image_path || item.image) : '';
@@ -666,12 +711,20 @@ def main() -> None:
       function lightboxMediaMarkup(item) {
         const imageSrc = item.image ? mediaUrl(item.image_path || item.image) : '';
         const videoSrc = item.video ? mediaUrl(item.preview_video || item.video_path || item.video) : '';
+        const fullResImageSrc = item.image ? getFullResImageUrl(item) : '';
         if (item.kind === 'live_photo' && imageSrc && videoSrc) {
-          return '<div class="media-lightbox-live"><img src="' + imageSrc + '" alt="Trail media" /><video data-live-photo muted autoplay playsinline controls src="' + videoSrc + '"></video></div>';
+          const imgTag = fullResImageSrc 
+            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\'' + imageSrc + '\'" alt="Trail media" />'
+            : '<img src="' + imageSrc + '" alt="Trail media" />';
+          return '<div class="media-lightbox-live">' + imgTag + '<video data-live-photo muted autoplay playsinline controls src="' + videoSrc + '"></video></div>';
         }
-        return imageSrc
-          ? '<img src="' + imageSrc + '" alt="Trail media" />'
-          : '<video muted autoplay playsinline loop controls src="' + videoSrc + '"></video>';
+        if (imageSrc) {
+          const imgTag = fullResImageSrc
+            ? '<img src="' + fullResImageSrc + '" onerror="this.src=\'' + imageSrc + '\'" alt="Trail media" />'
+            : '<img src="' + imageSrc + '" alt="Trail media" />';
+          return imgTag;
+        }
+        return '<video muted autoplay playsinline loop controls src="' + videoSrc + '"></video>';
       }
 
       function activateLightboxLivePhoto(lightbox) {
@@ -728,6 +781,7 @@ def main() -> None:
         '__MEDIA_JSON__': media_json,
         '__STAGE_COUNT__': str(len(tracks)),
         '__TOTAL_KM__': str(total_track_km),
+        '__GITHUB_RAW_BASE__': github_raw_base,
     }
 
     html = template

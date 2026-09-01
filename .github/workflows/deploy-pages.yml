@@ -25,11 +25,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Create isolated Python environment
+      - name: Create isolated Python environment and generate assets
+        env:
+          GITHUB_RAW_BASE: ${{ github.server_url }}/${{ github.repository }}/raw/${{ github.ref_name }}
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m py_compile generate_route_data.py generate_media_data.py generate_index.py
+          .venv/bin/python generate_route_data.py
+          .venv/bin/python generate_media_data.py
+          .venv/bin/python generate_index.py
+      - name: Prepare deployment (remove dev/cache files and full-res photos)
+        run: |
+          # Remove Python virtual environment (not needed for static site)
+          rm -rf .venv __pycache__
+          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+          
+          # Keep only preview caches, remove full-resolution photos
+          if [ -d "photos" ]; then
+            find photos -type f ! -path "*/previews/*" -delete
+            find photos -type d -empty -delete
+          fi
+          
+          # Report deployment size
+          echo "Deployment payload size:"
+          du -sh . 2>/dev/null | head -1 || echo "Size calculation complete"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
