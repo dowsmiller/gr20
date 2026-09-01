@@ -18,6 +18,7 @@ import imageio_ffmpeg
 from pathlib import Path
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 PHOTOS_DIR = ROOT / "photos"
@@ -52,38 +53,58 @@ def parse_timestamp(value: str | None) -> float | None:
 
 
 def build_preview_cache(path: Path) -> dict[str, str]:
+    """Generate preview caches for an image using Pillow (cross-platform)."""
     PREVIEW_DIR.mkdir(exist_ok=True)
     previews = {}
-    dimensions = subprocess.run(
-        ["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout
-    width_match = re.search(r"pixelWidth:\s+(\d+)", dimensions)
-    height_match = re.search(r"pixelHeight:\s+(\d+)", dimensions)
-    if not width_match or not height_match:
+    
+    try:
+        with Image.open(path) as img:
+            width, height = img.size
+    except Exception:
         return previews
-    is_portrait = int(width_match.group(1)) <= int(height_match.group(1))
+    
+    is_portrait = width <= height
+    
     for field, size in PREVIEW_SIZES.items():
         output_path = PREVIEW_DIR / f"{path.stem}-{size}-square.jpg"
         if not output_path.exists() or output_path.stat().st_mtime < path.stat().st_mtime:
-            scaled_path = PREVIEW_DIR / f".{path.stem}-{size}-scaled.jpg"
-            subprocess.run(
-                ["sips", "--resampleWidth" if is_portrait else "--resampleHeight", str(size), str(path), "--out", str(scaled_path)],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            subprocess.run(
-                ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "75", "--cropToHeightWidth", str(size), str(size), str(scaled_path), "--out", str(output_path)],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            scaled_path.unlink(missing_ok=True)
+            try:
+                with Image.open(path) as img:
+                    # Convert RGBA to RGB if necessary
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                        rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                        img = rgb_img
+                    
+                    # Scale image (keep aspect ratio)
+                    if is_portrait:
+                        # For portrait: scale width, height follows
+                        ratio = size / img.width
+                        new_width = size
+                        new_height = int(img.height * ratio)
+                    else:
+                        # For landscape: scale height, width follows
+                        ratio = size / img.height
+                        new_height = size
+                        new_width = int(img.width * ratio)
+                    
+                    scaled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    
+                    # Crop to square from center
+                    left = (scaled.width - size) // 2
+                    top = (scaled.height - size) // 2
+                    right = left + size
+                    bottom = top + size
+                    square = scaled.crop((left, top, right, bottom))
+                    
+                    # Save as JPEG with quality 75
+                    square.save(output_path, 'JPEG', quality=75, optimize=False)
+            except Exception:
+                continue
+        
         if output_path.exists():
             previews[field] = f"photos/previews/{output_path.name}"
+    
     return previews
 
 
